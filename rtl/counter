@@ -1,0 +1,76 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Module Name : counter
+// Project     : DIGITAL ALARM CLOCK
+// Description : Holds the current time (HH:MM in BCD, 2 digits per field).
+//               Increments on every one_minute pulse, cascading through
+//               ls_min -> ms_min -> ls_hr -> ms_hr with correct BCD/24h wrap.
+//               Can be pre-loaded with a new current time via load_new_c.
+//////////////////////////////////////////////////////////////////////////////////
+
+module counter(
+    input clk,
+    input reset,
+    input one_minute,
+    input load_new_c,
+    input [3:0] new_current_time_ms_hr,
+    input [3:0] new_current_time_ls_hr,
+    input [3:0] new_current_time_ms_min,
+    input [3:0] new_current_time_ls_min,
+    output reg [3:0] current_time_ms_hr,
+    output reg [3:0] current_time_ls_hr,
+    output reg [3:0] current_time_ms_min,
+    output reg [3:0] current_time_ls_min
+);
+
+// Synchronous sequential counter with asynchronous reset
+always @(posedge clk or posedge reset) begin
+    if (reset) begin
+        current_time_ms_hr  <= 4'd0;
+        current_time_ls_hr  <= 4'd0;
+        current_time_ms_min <= 4'd0;
+        current_time_ls_min <= 4'd0;
+    end
+    else if (load_new_c) begin
+        current_time_ms_hr  <= new_current_time_ms_hr;
+        current_time_ls_hr  <= new_current_time_ls_hr;
+        current_time_ms_min <= new_current_time_ms_min;
+        current_time_ls_min <= new_current_time_ls_min;
+    end
+    else if (one_minute) begin
+        // Cascade Logic: check from the smallest unit (LS minute) to the largest (MS hour)
+
+        // 1. Day Wrap-around (23:59 -> 00:00)
+        if (current_time_ms_hr == 4'd2 && current_time_ls_hr == 4'd3 &&
+            current_time_ms_min == 4'd5 && current_time_ls_min == 4'd9) begin
+            current_time_ms_hr  <= 4'd0;
+            current_time_ls_hr  <= 4'd0;
+            current_time_ms_min <= 4'd0;
+            current_time_ls_min <= 4'd0;
+        end
+        // 2. Hour Wrap-around (X9:59 -> (X+1)0:00), e.g. 09:59 -> 10:00
+        else if (current_time_ls_hr == 4'd9 && current_time_ms_min == 4'd5 && current_time_ls_min == 4'd9) begin
+            current_time_ms_hr  <= current_time_ms_hr + 1'b1;
+            current_time_ls_hr  <= 4'd0;
+            current_time_ms_min <= 4'd0;
+            current_time_ls_min <= 4'd0;
+        end
+        // 3. Normal Hour Increment (XX:59 -> (XX+1):00), e.g. 01:59 -> 02:00
+        else if (current_time_ms_min == 4'd5 && current_time_ls_min == 4'd9) begin
+            current_time_ls_hr  <= current_time_ls_hr + 1'b1;
+            current_time_ms_min <= 4'd0;
+            current_time_ls_min <= 4'd0;
+        end
+        // 4. Ten-Minute Increment (XX:X9 -> XX:(X+1)0), e.g. 00:09 -> 00:10
+        else if (current_time_ls_min == 4'd9) begin
+            current_time_ms_min <= current_time_ms_min + 1'b1;
+            current_time_ls_min <= 4'd0;
+        end
+        // 5. Normal Increment: just add 1 minute
+        else begin
+            current_time_ls_min <= current_time_ls_min + 1'b1;
+        end
+    end
+end
+
+endmodule
