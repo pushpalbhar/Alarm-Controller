@@ -1,0 +1,168 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Module Name : control_unit  (a.k.a. "Alarm Controller" in the top schematic)
+// Project     : DIGITAL ALARM CLOCK
+// Description : Moore FSM implementing the front-panel behaviour shown in
+//               controlfsm.png:
+//                 SHOW_TIME -> SHOW_ALARM        (alarm_button)
+//                 SHOW_TIME -> KEY_STORED        (key != NOKEY)
+//                 KEY_STORED -> KEY_WAITED       (always)
+//                 KEY_WAITED -> KEY_ENTRY        (key == NOKEY)
+//                 KEY_WAITED -> SHOW_TIME        (time_out == 0)
+//                 KEY_ENTRY  -> SET_ALARM_TIME   (alarm_button)
+//                 KEY_ENTRY  -> SET_CURRENT_TIME (time_button)
+//                 KEY_ENTRY  -> SHOW_TIME        (time_out == 0)
+//                 KEY_ENTRY  -> KEY_STORED       (key != NOKEY)
+//                 SET_ALARM_TIME   -> SHOW_TIME  (always)
+//                 SET_CURRENT_TIME -> SHOW_TIME  (always)
+//////////////////////////////////////////////////////////////////////////////////
+
+module control_unit(
+    input clock,
+    input reset,
+    input one_second,
+    input time_button,
+    input alarm_button,
+    input [3:0] key,
+    output load_new_a,
+    output show_a,
+    output show_new_time,
+    output load_new_c,
+    output shift,
+    output reset_count
+);
+
+reg [2:0] prev_state, next_state;
+wire time_out;
+reg [3:0] count1, count2;
+
+// State Definitions
+parameter SHOW_TIME        = 3'b000;
+parameter KEY_ENTRY        = 3'b001;
+parameter KEY_STORED       = 3'b010;
+parameter SHOW_ALARM       = 3'b011;
+parameter SET_ALARM_TIME   = 3'b100;
+parameter SET_CURRENT_TIME = 3'b101;
+parameter KEY_WAITED       = 3'b110;
+
+// "10" represents NOKEY (no numeric key pressed)
+parameter NOKEY            = 4'd10;
+
+// 1. Timer for KEY_ENTRY state (10-second timeout)
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        count1 <= 4'b0;
+    end
+    else if (prev_state != KEY_ENTRY) begin
+        count1 <= 4'b0;
+    end
+    else if (count1 == 4'd9) begin
+        count1 <= 4'd0;
+    end
+    else if (one_second) begin
+        count1 <= count1 + 1'b1;
+    end
+end
+
+// 2. Timer for KEY_WAITED state (10-second timeout)
+always @(posedge clock or posedge reset) begin
+    if (reset) begin
+        count2 <= 4'b0;
+    end
+    else if (prev_state != KEY_WAITED) begin
+        count2 <= 4'b0;
+    end
+    else if (count2 == 4'd9) begin
+        count2 <= 4'd0;
+    end
+    else if (one_second) begin
+        count2 <= count2 + 1'b1;
+    end
+end
+
+// Active-Low Timeout Logic (time_out == 0 when 10 seconds pass)
+assign time_out = ((count1 == 4'd9) || (count2 == 4'd9)) ? 1'b0 : 1'b1;
+
+// 3. Present State Register (Sequential)
+always @(posedge clock or posedge reset) begin
+    if (reset)
+        prev_state <= SHOW_TIME;
+    else
+        prev_state <= next_state;
+end
+
+// 4. Next State Logic (Combinational)
+always @(*) begin
+    case (prev_state)
+        SHOW_TIME: begin
+            if (alarm_button)
+                next_state = SHOW_ALARM;
+            else if (key != NOKEY)
+                next_state = KEY_STORED;
+            else
+                next_state = SHOW_TIME;
+        end
+
+        SHOW_ALARM: begin
+            if (!alarm_button)
+                next_state = SHOW_TIME;
+            else
+                next_state = SHOW_ALARM;
+        end
+
+        KEY_STORED: begin
+            next_state = KEY_WAITED;
+        end
+
+        KEY_WAITED: begin
+            if (key == NOKEY)
+                next_state = KEY_ENTRY;
+            else if (time_out == 1'b0)
+                next_state = SHOW_TIME;
+            else
+                next_state = KEY_WAITED;
+        end
+
+        KEY_ENTRY: begin
+            if (alarm_button)
+                next_state = SET_ALARM_TIME;
+            else if (time_button)
+                next_state = SET_CURRENT_TIME;
+            else if (time_out == 1'b0)
+                next_state = SHOW_TIME;
+            else if (key != NOKEY)
+                next_state = KEY_STORED;
+            else
+                next_state = KEY_ENTRY;
+        end
+
+        SET_ALARM_TIME: begin
+            next_state = SHOW_TIME;
+        end
+
+        SET_CURRENT_TIME: begin
+            next_state = SHOW_TIME;
+        end
+
+        default: begin
+            next_state = SHOW_TIME;
+        end
+    endcase
+end
+
+// 5. Moore FSM Output Assignments
+assign show_new_time = (prev_state == KEY_ENTRY ||
+                         prev_state == KEY_STORED ||
+                         prev_state == KEY_WAITED) ? 1'b1 : 1'b0;
+
+assign show_a        = (prev_state == SHOW_ALARM) ? 1'b1 : 1'b0;
+assign load_new_a    = (prev_state == SET_ALARM_TIME) ? 1'b1 : 1'b0;
+assign load_new_c    = (prev_state == SET_CURRENT_TIME) ? 1'b1 : 1'b0;
+assign shift         = (prev_state == KEY_STORED) ? 1'b1 : 1'b0;
+
+// reset_count asserts when outside of data-entry tracking states.
+// (Kept as a status output per the top-level schematic; not required
+//  internally since count1/count2 already self-clear above.)
+assign reset_count   = (prev_state != KEY_ENTRY && prev_state != KEY_WAITED) ? 1'b1 : 1'b0;
+
+endmodule
