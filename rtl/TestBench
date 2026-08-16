@@ -1,0 +1,203 @@
+module tb_alarm_clock_top;
+
+    localparam NOKEY = 4'd10;
+
+    reg clk, reset, stopwatch, alarm_button, time_button;
+    reg [3:0] key;
+
+    wire sound_alarm;
+    wire [7:0] display_ms_hr, display_ls_hr, display_ms_min, display_ls_min;
+
+    integer errors = 0;
+
+    // DUT: FAST_DIV=4 (from clock_generator default) with stopwatch=1
+    // -> one_second every 4 clk cycles, one_minute every 60 seconds
+    //    = 240 clk cycles. Keeps the whole testbench in the microsecond range.
+    alarm_clock_top #(
+        .CLK_FREQ_HZ(50_000_000)
+    ) dut (
+        .clk            (clk),
+        .reset          (reset),
+        .stopwatch      (stopwatch),
+        .alarm_button   (alarm_button),
+        .time_button    (time_button),
+        .key            (key),
+        .sound_alarm    (sound_alarm),
+        .display_ms_hr  (display_ms_hr),
+        .display_ls_hr  (display_ls_hr),
+        .display_ms_min (display_ms_min),
+        .display_ls_min (display_ls_min)
+    );
+
+    // 100 MHz-ish test clock (period value itself is arbitrary in sim)
+    initial clk = 0;
+    always #5 clk = ~clk;
+
+    // ---------------- helper tasks ----------------
+
+    // ASCII '0'-'9' -> BCD digit, for readable checks
+    function [3:0] ascii_digit;
+        input [7:0] code;
+        begin
+            ascii_digit = code - 8'h30;
+        end
+    endfunction
+
+    task do_reset;
+        begin
+            reset = 1;
+            stopwatch = 1;
+            alarm_button = 0;
+            time_button = 0;
+            key = NOKEY;
+            repeat (4) @(posedge clk);
+            reset = 0;
+            @(posedge clk);
+        end
+    endtask
+
+    // Press a single key for one one_second-generating cycle window, long
+    // enough for control_unit (KEY_STORED -> KEY_WAITED -> KEY_ENTRY) to
+    // register it, then release back to NOKEY.
+    task press_key(input [3:0] k);
+        begin
+            key = k;
+            // Hold the key through SHOW_TIME/KEY_ENTRY -> KEY_STORED -> the
+            // edge where key_register actually latches it (that capture
+            // happens on the KEY_STORED -> KEY_WAITED transition edge, so
+            // `key` must still be valid AT that edge, not released on it -
+            // releasing on the same edge races with the register's sample).
+            @(posedge clk);
+            @(posedge clk);
+            @(posedge clk);
+            key = NOKEY;
+            // let FSM walk KEY_WAITED -> (key==NOKEY) -> KEY_ENTRY
+            repeat (4) @(posedge clk);
+        end
+    endtask
+
+    // Type 4 digits (H H M M) into the key register via the FSM,
+    // then hit alarm_button or time_button to commit (SET_ALARM_TIME /
+    // SET_CURRENT_TIME), matching controlfsm.png: KEY_ENTRY -> SET_*_TIME.
+    task type_time(input [3:0] d1, input [3:0] d2, input [3:0] d3, input [3:0] d4,
+                    input commit_as_alarm); // 1 = alarm_button, 0 = time_button
+        begin
+            press_key(d1);
+            press_key(d2);
+            press_key(d3);
+            press_key(d4);
+            // now in KEY_ENTRY, waiting for alarm_button/time_button
+            if (commit_as_alarm) alarm_button = 1; else time_button = 1;
+            @(posedge clk); // KEY_ENTRY -> SET_*_TIME
+            @(posedge clk); // SET_*_TIME -> SHOW_TIME (load pulse happens here)
+            alarm_button = 0;
+            time_button  = 0;
+            @(posedge clk);
+        end
+    endtask
+
+    task check(input cond, input [8*40-1:0] msg);
+        begin
+            if (!cond) begin
+                errors = errors + 1;
+                $display("[%0t] FAIL: %0s", $time, msg);
+            end
+            else begin
+                $display("[%0t] PASS: %0s", $time, msg);
+            end
+        end
+    endtask
+
+    // ---------------- main test sequence ----------------
+    initial begin
+        $dumpfile("sim/alarm_clock.vcd");
+        $dumpvars(0, tb_alarm_clock_top);
+
+        // ---- 1. Reset check ----
+        do_reset;
+        check(dut.current_time_ms_hr == 0 && dut.current_time_ls_hr == 0 &&
+              dut.current_time_ms_min == 0 && dut.current_time_ls_min == 0,
+              "After reset, current time is 00:00");
+        check(dut.alarm_time_ms_hr == 0 && dut.alarm_time_ls_hr == 0 &&
+              dut.alarm_time_ms_min == 0 && dut.alarm_time_ls_min == 0,
+              "After reset, alarm time is 00:00");
+        check(ascii_digit(display_ms_hr) == 0 && ascii_digit(display_ls_hr) == 0 &&
+              ascii_digit(display_ms_min) == 0 && ascii_digit(display_ls_min) == 0,
+              "After reset, display shows 00:00");
+
+        // ---- 2. Let the clock tick: run long enough for several minutes ----
+        // one_second every 4 clk cycles (stopwatch fast mode), one_minute
+        // every 60 one_second ticks => 240 clk cycles per simulated minute.
+        // (+2 extra cycles margin so the registered counter update has
+        //  landed before we sample it.)
+        repeat (240 * 9 + 2) @(posedge clk); // ~9 simulated minutes
+        check(dut.current_time_ms_min == 4'd0 && dut.current_time_ls_min == 4'd9,
+              "Clock free-runs to 00:09 after 9 minute-ticks");
+
+        repeat (240 * 1) @(posedge clk); // -> 00:10 (ten-minute rollover)
+        check(dut.current_time_ms_min == 4'd1 && dut.current_time_ls_min == 4'd0,
+              "Ten-minute rollover 00:09 -> 00:10");
+
+        // ---- 3. Program a new CURRENT time: 23:58 ----
+        type_time(4'd2, 4'd3, 4'd5, 4'd8, 1'b0); // time_button commit
+        check(dut.current_time_ms_hr == 4'd2 && dut.current_time_ls_hr == 4'd3 &&
+              dut.current_time_ms_min == 4'd5 && dut.current_time_ls_min == 4'd8,
+              "Current time loaded via keypad -> 23:58");
+
+        // Let it tick twice to see hour+day wraparound: 23:58 -> 23:59 -> 00:00
+        repeat (240 * 2 + 2) @(posedge clk);
+        check(dut.current_time_ms_hr == 4'd0 && dut.current_time_ls_hr == 4'd0 &&
+              dut.current_time_ms_min == 4'd0 && dut.current_time_ls_min == 4'd0,
+              "Midnight day wrap-around 23:59 -> 00:00");
+
+        // ---- 4. Program a new ALARM time: 00:02 (2 fast-minutes from now) ----
+        type_time(4'd0, 4'd0, 4'd0, 4'd2, 1'b1); // alarm_button commit
+        check(dut.alarm_time_ms_hr == 4'd0 && dut.alarm_time_ls_hr == 4'd0 &&
+              dut.alarm_time_ms_min == 4'd0 && dut.alarm_time_ls_min == 4'd2,
+              "Alarm time loaded via keypad -> 00:02");
+
+        // ---- 5. View the alarm ----
+        // (small #1 delay after each posedge: prev_state updates via a
+        //  nonblocking assign in the same clock edge, which lands in the
+        //  NBA region *after* a plain "@(posedge clk);" resumes here, so a
+        //  tiny settle delay avoids sampling the pre-edge value.)
+        alarm_button = 1;
+        @(posedge clk); #1;
+        check(dut.u_control_unit.show_a == 1'b1, "show_a asserted while alarm_button held");
+        check(ascii_digit(display_ls_min) == 4'd2, "Display mux shows alarm digits while viewing alarm");
+        alarm_button = 0;
+        @(posedge clk); #1;
+        check(dut.u_control_unit.show_a == 1'b0, "show_a de-asserted after releasing alarm_button");
+
+        // ---- 6. Run the clock until it hits the alarm time (00:02) and rings ----
+        repeat (240 * 2 + 22) @(posedge clk);
+        check(dut.current_time_ms_min == 4'd0 && dut.current_time_ls_min == 4'd2,
+              "Current time reached 00:02");
+        check(sound_alarm == 1'b1, "sound_alarm asserted when current time == alarm time");
+
+        // ---- 7. KEY_ENTRY timeout: press one digit, then wait >10 seconds idle ----
+        do_reset;
+        press_key(4'd5);
+        // now sitting in KEY_ENTRY; wait > 10 "seconds" without another key
+        // (10 seconds = 40 clk cycles in fast mode) plus margin
+        repeat (60) @(posedge clk);
+        check(dut.u_control_unit.prev_state == 3'b000, // SHOW_TIME
+              "KEY_ENTRY times out back to SHOW_TIME after 10s of inactivity");
+
+        // ---- summary ----
+        if (errors == 0)
+            $display("\n*** ALL TESTS PASSED ***\n");
+        else
+            $display("\n*** %0d TEST(S) FAILED ***\n", errors);
+
+        $finish;
+    end
+
+    // safety timeout
+    initial begin
+        #2_000_000;
+        $display("TIMEOUT: simulation ran too long");
+        $finish;
+    end
+
+endmodule
