@@ -1,0 +1,20 @@
+[45000] PASS: After reset, current time is 00:00
+[45000] PASS: After reset, alarm time is 00:00
+[45000] PASS: After reset, display shows 00:00
+INFO: [USF-XSim-96] XSim completed. Design snapshot 'tb_alarm_clock_top_behav' loaded.
+INFO: [USF-XSim-97] XSim simulation ran for 1000ns
+launch_simulation: Time (s): cpu = 00:00:06 ; elapsed = 00:00:13 . Memory (MB): peak = 2101.555 ; gain = 0.000
+run all
+[21665000] PASS:  free-runs to 00:09 after 9 minute-ticks
+[24065000] PASS: Ten-minute rollover 00:09 -> 00:10
+[24375000] PASS: Current time loaded via keypad -> 23:58
+[29195000] PASS: Midnight day wrap-around 23:59 -> 00:00
+[29505000] PASS: Alarm time loaded via keypad -> 00:02
+[29516000] PASS: show_a asserted while alarm_button held
+[29516000] PASS: x shows alarm digits while viewing alarm
+[29526000] PASS: de-asserted after releasing alarm_button
+[34545000] PASS: Current time reached 00:02
+[34545000] PASS: asserted when current time == alarm time
+[35265000] PASS: ack to SHOW_TIME after 10s of inactivity
+
+*** ALL TESTS PASSED ***
