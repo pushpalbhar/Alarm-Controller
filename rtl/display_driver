@@ -1,0 +1,77 @@
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Module Name : display_driver
+// Project     : DIGITAL ALARM CLOCK
+// Description : Drives ONE 7-segment/LCD digit. The top module instantiates
+//               four of these (ms_hr, ls_hr, ms_min, ls_min).
+//               Priority for what is shown on this digit:
+//                 1. show_new_time -> show the digit currently being typed (key)
+//                 2. show_alarm    -> show the alarm-time digit
+//                 3. default       -> show the current-time digit
+//               sound_alarm (per digit) goes high when this digit of the
+//               current time equals this digit of the alarm time; the top
+//               module ANDs all four sound_alarm bits together to get the
+//               real, whole-time alarm match.
+//////////////////////////////////////////////////////////////////////////////////
+
+module display_driver(
+    input [3:0] key,
+    input [3:0] alarm_time,
+    input [3:0] current_time,
+    input show_alarm,
+    input show_new_time,
+    output reg [7:0] display_time,
+    output reg sound_alarm
+);
+
+reg [3:0] display_value;
+
+// mapping to display's LCD/7-seg ASCII codes
+parameter ZERO  = 8'h30;
+parameter ONE   = 8'h31;
+parameter TWO   = 8'h32;
+parameter THREE = 8'h33;
+parameter FOUR  = 8'h34;
+parameter FIVE  = 8'h35;
+parameter SIX   = 8'h36;
+parameter SEVEN = 8'h37;
+parameter EIGHT = 8'h38;
+parameter NINE  = 8'h39;
+parameter ERROR = 8'h3A;
+
+// Display shows different time based on input:
+// 1. the user entered new time (from key register) if show_new_time is enabled
+// 2. the alarm time if show_alarm is selected
+// 3. default: acts as a normal clock and shows current time
+always @(alarm_time or current_time or show_alarm or show_new_time or key) begin
+    if (show_new_time)
+        display_value = key;
+    else if (show_alarm == 1)
+        display_value = alarm_time;
+    else
+        display_value = current_time;
+
+    // when current time and alarm time digit match, flag it (top module
+    // combines all four digit-matches into the real sound_alarm output)
+    sound_alarm = (current_time == alarm_time) ? 1'b1 : 1'b0;
+end
+
+// decoder logic
+always @(display_value) begin
+    case (display_value)
+        4'd0: display_time = ZERO;
+        4'd1: display_time = ONE;
+        4'd2: display_time = TWO;
+        4'd3: display_time = THREE;
+        4'd4: display_time = FOUR;
+        4'd5: display_time = FIVE;
+        4'd6: display_time = SIX;
+        4'd7: display_time = SEVEN;
+        4'd8: display_time = EIGHT;
+        4'd9: display_time = NINE;
+        default: display_time = ERROR;
+    endcase
+end
+
+endmodule
