@@ -1,0 +1,46 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Module Name : key_register
+// Project     : DIGITAL ALARM CLOCK
+// Description : 4-digit shift register used while the user types a new time
+//               on the keypad. Every time the control_unit pulses `shift`
+//               (one clock cycle, in state KEY_STORED, i.e. once per digit
+//               pressed) the new digit enters at the LS-minute position and
+//               everything else shifts left:
+//
+//                   ms_hr <= ls_hr, ls_hr <= ms_min, ms_min <= ls_min, ls_min <= key
+//
+//               so typing 4 digits in order H H M M leaves:
+//                   key_buffer_ms_hr = 1st digit, key_buffer_ls_hr = 2nd digit
+//                   key_buffer_ms_min = 3rd digit, key_buffer_ls_min = 4th digit
+//               exactly like typing "HH:MM" left to right (same idea as
+//               entering a PIN / phone number on a 4-digit shift register).
+//////////////////////////////////////////////////////////////////////////////////
+
+module key_register(
+    input clk,
+    input reset,
+    input shift,
+    input [3:0] key,
+    output reg [3:0] key_buffer_ms_hr,
+    output reg [3:0] key_buffer_ls_hr,
+    output reg [3:0] key_buffer_ms_min,
+    output reg [3:0] key_buffer_ls_min
+);
+
+always @(posedge clk or posedge reset) begin
+    if (reset) begin
+        key_buffer_ms_hr  <= 4'd0;
+        key_buffer_ls_hr  <= 4'd0;
+        key_buffer_ms_min <= 4'd0;
+        key_buffer_ls_min <= 4'd0;
+    end
+    else if (shift) begin
+        key_buffer_ms_hr  <= key_buffer_ls_hr;
+        key_buffer_ls_hr  <= key_buffer_ms_min;
+        key_buffer_ms_min <= key_buffer_ls_min;
+        key_buffer_ls_min <= key;
+    end
+end
+
+endmodule
